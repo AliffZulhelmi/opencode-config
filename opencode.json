@@ -594,7 +594,8 @@
       "name": "afiqstore",
       "npm": "@ai-sdk/openai-compatible",
       "options": {
-        "baseURL": "https://rootsys.cloud/v1"
+        "baseURL": "https://rootsys.cloud/v1",
+        "apiKey": "{env:AFIQSTORE_API_KEY}"
       },
       "models": {
         "kimi-k3": {
