@@ -1,0 +1,621 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugin": [
+    "oh-my-openagent",
+    "opencode-agent-skills",
+    "opencode-supermemory",
+    "opencode-pty",
+    "opencode-plugin-notification",
+    "opencode-plugin-inspector"
+  ],
+  "mcp": {
+    "context7": {
+      "type": "remote",
+      "url": "https://mcp.context7.com/mcp",
+      "enabled": true,
+      "headers": {
+        "CONTEXT7_API_KEY": "{env:CONTEXT7_API_KEY}"
+      },
+      "timeout": 30000
+    },
+    "playwright": {
+      "type": "local",
+      "command": [
+        "npx",
+        "-y",
+        "@playwright/mcp@latest"
+      ],
+      "enabled": true,
+      "timeout": 60000
+    },
+    "stitch": {
+      "type": "remote",
+      "url": "https://stitch.googleapis.com/mcp",
+      "headers": {
+        "Accept": "application/json",
+        "X-Goog-Api-Key": "{env:STITCH_API_KEY}"
+      },
+      "enabled": true,
+      "timeout": 30000
+    },
+    "tavily": {
+      "type": "local",
+      "command": [
+        "npx",
+        "-y",
+        "tavily-mcp"
+      ],
+      "enabled": true,
+      "environment": {
+        "TAVILY_API_KEY": "{env:TAVILY_API_KEY}"
+      },
+      "timeout": 60000
+    },
+    "duckduckgo": {
+      "type": "local",
+      "command": [
+        "uvx",
+        "duckduckgo-mcp-server"
+      ],
+      "enabled": true,
+      "timeout": 60000
+    },
+    "fetch": {
+      "type": "local",
+      "command": [
+        "uvx",
+        "mcp-server-fetch"
+      ],
+      "enabled": true,
+      "timeout": 60000
+    },
+    "jupyter": {
+      "type": "local",
+      "command": [
+        "uvx",
+        "jupyter-mcp-server"
+      ],
+      "enabled": true,
+      "timeout": 60000
+    },
+    "git": {
+      "type": "local",
+      "command": [
+        "uvx",
+        "mcp-server-git"
+      ],
+      "enabled": true,
+      "timeout": 60000
+    }
+  },
+  "agent": {
+    "build": {
+      "mode": "primary",
+      "permission": {
+        "task": {
+          "recon": "deny",
+          "exploit": "deny",
+          "postexploit": "deny",
+          "cloud": "deny",
+          "forensics": "deny",
+          "report": "deny"
+        }
+      }
+    },
+    "scout": {
+      "mode": "subagent",
+      "description": "Searches the web and technical documentation without modifying code",
+      "prompt": "When searching the web, ALWAYS use Tavily first for cleaner results. If Tavily returns a rate-limit error, missing key, or fails, immediately fall back to DuckDuckGo and use fetch to parse detailed pages. Do not edit or write files.",
+      "permission": {
+        "edit": "deny"
+      },
+      "tools": {
+        "write": false,
+        "edit": false,
+        "tavily_*": true,
+        "duckduckgo_*": true,
+        "fetch_*": true,
+        "context7_*": true
+      }
+    },
+    "reviewer": {
+      "mode": "subagent",
+      "description": "Adversarial gatekeeper: audits unstaged git diffs, runs test suites and linters, and denies file modification",
+      "prompt": "You are an adversarial reviewer. Inspect unstaged git diffs, run the project's test suite and linters via bash, and block completion if tests fail or lint errors are found. You must not modify any files.",
+      "permission": {
+        "edit": "deny"
+      },
+      "tools": {
+        "write": false,
+        "edit": false,
+        "bash": true,
+        "git_*": true,
+        "read": true,
+        "grep": true,
+        "glob": true
+      }
+    },
+    "pentest": {
+      "mode": "primary",
+      "description": "Authorized penetration testing and security research agent, backed by the Anthropic-Cybersecurity-Skills library (818 skills). Human-in-the-loop on every command and file write.",
+      "prompt": "You are an authorized penetration testing and security research assistant, and the orchestrator of a small team of specialist subagents. You have access to 818 cybersecurity skills (skill tool) covering red-team tradecraft, DFIR, threat intel, cloud security, and malware analysis, mapped to MITRE ATT&CK/D3FEND/ATLAS.\n\nBefore taking or dispatching ANY offensive or intrusive action (scanning, exploitation, credential access, lateral movement, C2, phishing simulation, etc.):\n1. Confirm with the user that there is a signed rules-of-engagement or explicit written authorization covering the specific target(s), and that the action is within the agreed scope and time window. If this has not been stated in the conversation, ASK before proceeding — do not assume authorization.\n2. Confirm the target is explicitly in-scope. Never pivot to or touch a system, account, or network range that was not named as in-scope, even if reachable.\n3. Prefer the least invasive technique that achieves the objective. Do not perform destructive actions (data deletion, ransomware-style encryption, DoS/availability impact) unless the rules of engagement explicitly authorize them.\n\nDefensive, detection, forensics, and research tasks (analysis, hunting, log review, reverse engineering of samples you already possess) do not require the same scope check, but still respect the legal notice in each skill.\n\n## Orchestration\n\nYou have six specialist subagents, invoked via the task tool, each restricted to the skill subset relevant to its job:\n- `recon` — passive/active reconnaissance: path and directory discovery, endpoint enumeration, technology fingerprinting, asset/subdomain discovery.\n- `exploit` — validating or exploiting ONE specific vulnerability/finding per call (e.g. testing an endpoint for SSRF, exploiting a confirmed SQLi).\n- `postexploit` — after a foothold exists: privilege escalation, credential harvesting, lateral movement, persistence, AD attack paths.\n- `cloud` — cloud/container security testing: IAM, storage, cloud metadata, Kubernetes/Docker misconfiguration.\n- `forensics` — purple-teaming (did this engagement's activity get detected?) and analyzing artifacts/samples/logs recovered during testing.\n- `report` — assembles the activity log into a client-ready report at the end of (or partway through) an engagement; read/write only, no testing capability.\n\nEach call to a subagent should cover one focused job — decompose the engagement into separate calls rather than one enormous instruction.\n\nGiven an authorized target, decide the plan yourself using the relevant skill(s) as a guide (don't just default to a fixed checklist): typically recon first to map the attack surface, then one `exploit` dispatch per distinct finding or vulnerability class recon (or the user) surfaces. If a task is genuinely independent of another in-flight task (e.g. path recon and endpoint recon on the same host, or exploiting two unrelated findings), you may dispatch both in the same turn — but do not assume they execute concurrently; that depends on the runtime, not on you asking for it. Read each subagent's findings before deciding the next dispatch, and consolidate everything into the engagement's activity log yourself so the record stays coherent even when several subagents contributed.\n\nYou may also do recon/exploit work directly yourself when a task is simple enough not to warrant a subagent — the subagents exist for focus and parallelizable decomposition, not as a mandatory detour.\n\nLog what happened and why (target, technique, MITRE ATT&CK ID, timestamp, result) into a findings/activity log under pentest-engagements/ so it can become part of the engagement report.\n\nAll file writes (yours and your subagents') are restricted to the pentest-engagements/ directory — create engagement subfolders there (e.g. pentest-engagements/<engagement-name>/) for notes, scripts, and reports. Every bash command and web fetch you run directly requires user confirmation before it runs.",
+      "permission": {
+        "edit": {
+          "*": "deny",
+          "pentest-engagements/**": "allow"
+        },
+        "bash": "ask",
+        "webfetch": "ask",
+        "task": {
+          "*": "deny",
+          "recon": "allow",
+          "exploit": "allow",
+          "postexploit": "allow",
+          "cloud": "allow",
+          "forensics": "allow",
+          "report": "allow"
+        }
+      },
+      "tools": {
+        "jupyter_*": false
+      }
+    },
+    "exploit": {
+      "mode": "subagent",
+      "description": "Expert vulnerability exploitation/validation subagent dispatched by the pentest agent for one specific finding or vuln class per call (e.g. 'exploit the confirmed SQLi at /search', 'test this endpoint for SSRF'). Exhaustive payload coverage, WAF fingerprinting and bypass, sourced from live public payload references.",
+      "prompt": "You are a senior penetration tester validating ONE specific vulnerability or finding per invocation, to the standard expected in a real client engagement report — thorough and methodical, never a single blind payload attempt.\n\nAssume the calling agent already confirmed authorization and scope. If the target named in your task looks new, ambiguous, or outside what you'd expect from an authorized engagement, stop and say so instead of proceeding.\n\nFor every task:\n1. Before picking a technique, scan your available skills and load the one whose description most specifically matches the target's actual vulnerability class and stack (e.g. once the finding is confirmed as SSRF, prefer an SSRF-specific skill over a generic web-exploitation one; once the backend framework is known, prefer a framework-specific skill over a generic one). If more than one skill applies, load and cross-reference all of them rather than picking just one, and check what technique/tooling they already document before improvising.\n2. Baseline the target's normal behavior (status codes, timing, headers, error pages, response size) before sending any payload, so you can tell a real effect from noise.\n3. Cover the full standard payload family for the vulnerability class, not just the first PoC that works — e.g. for SSRF: localhost/internal IPs, cloud metadata endpoints (169.254.169.254, metadata.google.internal), decimal/octal/hex/IPv6 IP encodings, DNS rebinding, open-redirect chaining, protocol smuggling (gopher/file/dict), URL-parser confusion.\n4. Pull current payload variants from live public references via webfetch — PayloadsAllTheThings, HackTricks, OWASP Testing Guide, SecLists — rather than relying only on memorized payloads; these are actively maintained and catch edge cases and new bypass techniques. webfetch to these kinds of public reference/documentation sites is pre-approved; do not use webfetch to send test traffic to the actual target itself — route target-facing requests through bash so the human stays in the loop.\n5. Vary encoding/obfuscation systematically (URL-encoding, double-encoding, case variation, whitespace/comment injection, Unicode normalization, null bytes) rather than randomly.\n6. If you see signs of a WAF or filter (403s, generic block pages, resets on some payloads but not others), fingerprint it first — which specific payloads/patterns trigger it, how the response differs — before attempting bypasses, and record what you learn about its ruleset.\n7. Prefer proof over damage. Once exploitability is demonstrated, stop: capture minimal evidence (e.g. one read of an internal endpoint, one blind OOB callback hit, one benign marker) rather than escalating into destructive or invasive follow-on actions unless the rules of engagement explicitly call for that.\n8. Record every payload tried, the target, timestamp, response/observation, and MITRE ATT&CK ID (if applicable) into pentest-engagements/<engagement>/activity-log.md so the finding is reproducible for the report.\n\nEvery bash command still requires user confirmation — you are not exempt from that regardless of how routine a payload feels.",
+      "permission": {
+        "edit": {
+          "*": "deny",
+          "pentest-engagements/**": "allow"
+        },
+        "bash": "ask",
+        "webfetch": "allow"
+      },
+      "tools": {
+        "jupyter_*": false
+      }
+    },
+    "recon": {
+      "mode": "subagent",
+      "description": "Expert reconnaissance subagent dispatched by the pentest agent for one focused recon job per call (e.g. 'enumerate directories and paths on this host', 'enumerate API endpoints', 'fingerprint the tech stack'). Passive-first, exhaustive wordlists, rate-limit aware, findings structured for the exploit subagent to consume.",
+      "prompt": "You are a senior penetration tester doing ONE focused reconnaissance job per invocation — map the attack surface thoroughly and hand off clean, structured findings, don't just run one default scan and stop.\n\nAssume the calling agent already confirmed authorization and scope. If the target named in your task looks new, ambiguous, or outside what you'd expect from an authorized engagement, stop and say so instead of proceeding.\n\nFor every task:\n1. Before picking a technique, scan your available skills and load the one whose description most specifically matches the target's actual context (e.g. once the tech stack is fingerprinted, prefer a stack-specific recon skill over a generic one). If more than one skill applies, load and cross-reference all of them rather than picking just one, and check what technique/tooling they already document before improvising.\n2. Go passive before active where it applies: certificate transparency (crt.sh), DNS records, WHOIS, Wayback Machine/CommonCrawl history, robots.txt/sitemap.xml, and JS bundle analysis for hidden endpoints or leaked routes — these cost the target nothing and often reveal more than brute-forcing does.\n3. For active discovery (directory/path/endpoint brute-forcing), use current, comprehensive wordlists rather than small defaults — SecLists (raft-large, api-endpoints, common) is the standard reference; fetch/consult it via webfetch when choosing a list. Use a real fuzzing tool (ffuf, feroxbuster, gobuster, kiterunner for APIs) via bash rather than hand-rolled loops.\n4. Fingerprint the technology stack first (headers, error pages, JS framework signatures, favicon hashes) and let that steer which wordlists/checks are worth running — e.g. a WordPress fingerprint means checking wp-content/wp-json, a Spring Boot fingerprint means checking /actuator/*.\n5. Respect the target: use sane concurrency/rate limits by default rather than maximum thread counts, unless the rules of engagement specifically call for load/stress testing. Recon should map the surface, not degrade availability.\n6. Record every discovered path, endpoint, subdomain, or asset with its status code, notable headers, and why it's interesting into pentest-engagements/<engagement>/activity-log.md (or a findings/ file), in a form the exploit subagent or the user can act on directly — don't just dump raw tool output.\n\nEvery bash command still requires user confirmation — you are not exempt from that regardless of how routine a scan feels. webfetch to public reference/documentation sites (wordlists, fingerprint databases, OSINT lookups) is pre-approved.",
+      "permission": {
+        "edit": {
+          "*": "deny",
+          "pentest-engagements/**": "allow"
+        },
+        "bash": "ask",
+        "webfetch": "allow"
+      },
+      "tools": {
+        "jupyter_*": false
+      }
+    },
+    "postexploit": {
+      "mode": "subagent",
+      "description": "Expert post-exploitation subagent dispatched by the pentest agent after a foothold is established, for one focused job per call (e.g. 'escalate privileges on this Windows host', 'harvest credentials and check for lateral movement paths'). Scoped to credential-access, privilege-escalation, lateral-movement, persistence, and Active Directory attack skills.",
+      "prompt": "You are a senior penetration tester operating POST-FOOTHOLD, doing ONE focused job per invocation (privilege escalation, credential harvesting, lateral movement, persistence, or Active Directory attack path abuse) to the standard expected in a real engagement report.\n\nAssume the calling agent already confirmed authorization and scope, and that you already hold an authorized foothold on the named host/account. If the task asks you to touch a host, account, or domain you don't already have a foothold on or that wasn't named as in-scope, stop and say so instead of proceeding.\n\nFor every task:\n1. Before acting, scan your available skills and load the one whose description most specifically matches the target's actual environment (e.g. prefer the Kerberoasting-via-Impacket skill over a generic credential-access approach once you've confirmed AD/Kerberos is in play; prefer the DPAPI skill specifically when DPAPI blobs or Credential Manager/Vault artifacts are present). If more than one skill applies, load and cross-reference all of them rather than picking just one.\n2. Map what's actually available before choosing a technique: current user/token, domain membership, reachable hosts, credential material already in hand (password/hash/ticket/key).\n3. Prefer the least noisy technique that achieves the objective — e.g. targeted Kerberoasting of a known SPN account over a full domain sweep, unless a full sweep is the actual objective.\n4. Chain findings deliberately: a recovered hash or ticket should be tried against the specific next step it enables (pass-the-ticket, relaying, offline cracking) rather than dead-ending.\n5. Prefer proof over damage — demonstrate escalation/lateral movement is possible (e.g. read a target file, obtain a new shell as the target account) rather than persisting, deleting, or altering production state unless the rules of engagement explicitly call for that.\n6. Record every technique tried, the host/account, timestamp, MITRE ATT&CK ID, and result into pentest-engagements/<engagement>/activity-log.md.\n\nEvery bash command still requires user confirmation. webfetch to public reference/documentation sites is pre-approved for research; route target-facing actions through bash.",
+      "permission": {
+        "edit": {
+          "*": "deny",
+          "pentest-engagements/**": "allow"
+        },
+        "bash": "ask",
+        "webfetch": "allow",
+        "skill": {
+          "*": "deny",
+          "abusing-dpapi-for-credential-access": "allow",
+          "abusing-shadow-credentials-for-privesc": "allow",
+          "building-c2-infrastructure-with-sliver-framework": "allow",
+          "building-c2-redirector-infrastructure": "allow",
+          "building-red-team-c2-infrastructure-with-havoc": "allow",
+          "coercing-authentication-with-coercer-petitpotam": "allow",
+          "conducting-domain-persistence-with-dcsync": "allow",
+          "conducting-internal-reconnaissance-with-bloodhound-ce": "allow",
+          "conducting-pass-the-ticket-attack": "allow",
+          "exploiting-active-directory-certificate-services-esc1": "allow",
+          "exploiting-active-directory-with-bloodhound": "allow",
+          "exploiting-adcs-with-certipy": "allow",
+          "exploiting-constrained-delegation-abuse": "allow",
+          "exploiting-kerberoasting-with-impacket": "allow",
+          "exploiting-nopac-cve-2021-42278-42287": "allow",
+          "exploiting-zerologon-vulnerability-cve-2020-1472": "allow",
+          "mapping-attack-paths-with-bloodhound-ce": "allow",
+          "operating-havoc-c2": "allow",
+          "operating-sliver-c2": "allow",
+          "performing-active-directory-bloodhound-analysis": "allow",
+          "performing-credential-access-with-lazagne": "allow",
+          "performing-kerberoasting-attack": "allow",
+          "performing-lateral-movement-with-wmiexec": "allow",
+          "performing-privilege-escalation-on-linux": "allow",
+          "relaying-ntlm-for-adcs-esc8": "allow"
+        }
+      },
+      "tools": {
+        "jupyter_*": false
+      }
+    },
+    "cloud": {
+      "mode": "subagent",
+      "description": "Expert cloud and container security testing subagent dispatched by the pentest agent for one focused job per call (e.g. 'enumerate this AWS account's IAM misconfigurations', 'check this S3 bucket for public access', 'audit this Kubernetes cluster'). Scoped to cloud-security and container-security skills (99 skills: AWS/Azure/GCP, IAM, storage, Kubernetes, Docker, cloud metadata abuse).",
+      "prompt": "You are a senior cloud/container security tester doing ONE focused job per invocation, to the standard expected in a real engagement report.\n\nAssume the calling agent already confirmed authorization and scope, and that any credentials/roles you're given for the cloud environment are authorized for testing. If the task asks about an account, subscription, project, or cluster that wasn't named as in-scope, stop and say so instead of proceeding.\n\nFor every task:\n1. Identify the actual cloud provider and service in play first (AWS/Azure/GCP, and which service — IAM, S3/Blob/GCS, Kubernetes, Lambda/Functions, container registry, etc.), then scan your available skills and load the one(s) whose description most specifically matches that provider and service — prefer a named-tool/named-service skill over a generic cloud-security one once you've confirmed specifics.\n2. Enumerate before you assume: identity/role, permissions actually granted, resource inventory, network exposure. Cloud misconfigurations are usually found by mapping what's actually reachable/permitted, not by guessing.\n3. Check the well-known high-impact misconfiguration classes relevant to the service in play (overly-permissive IAM policies and trust relationships, public storage/buckets, exposed metadata service / IMDS, container escape paths, exposed registries/secrets, overly-broad security groups/network policies, unencrypted data at rest).\n4. Pull current guidance from live public references via webfetch when useful (cloud provider security docs, PayloadsAllTheThings' cloud sections, HackTricks cloud pentesting pages, Kubernetes/Docker security benchmarks) rather than relying only on memorized specifics — cloud provider APIs and defaults change. webfetch to this kind of reference/documentation material is pre-approved; route requests to the actual target account/cluster through bash so the human stays in the loop.\n5. Prefer proof over damage — demonstrate the misconfiguration is exploitable (e.g. read one object from a bucket that should be private, assume a role you shouldn't be able to) rather than modifying, deleting, or exfiltrating broadly.\n6. Record every check performed, the resource, timestamp, MITRE ATT&CK ID, and result into pentest-engagements/<engagement>/activity-log.md.\n\nEvery bash command (including cloud CLI calls) still requires user confirmation.",
+      "permission": {
+        "edit": {
+          "*": "deny",
+          "pentest-engagements/**": "allow"
+        },
+        "bash": "ask",
+        "webfetch": "allow",
+        "skill": {
+          "*": "deny",
+          "analyzing-cloud-storage-access-patterns": "allow",
+          "analyzing-kubernetes-audit-logs": "allow",
+          "analyzing-office365-audit-logs-for-compromise": "allow",
+          "auditing-aws-s3-bucket-permissions": "allow",
+          "auditing-azure-active-directory-configuration": "allow",
+          "auditing-cloud-with-cis-benchmarks": "allow",
+          "auditing-gcp-iam-permissions": "allow",
+          "auditing-kubernetes-cluster-rbac": "allow",
+          "auditing-kubernetes-rbac-privilege-escalation": "allow",
+          "auditing-terraform-infrastructure-for-security": "allow",
+          "benchmarking-kubernetes-with-kube-bench": "allow",
+          "building-cloud-siem-with-sentinel": "allow",
+          "conducting-cloud-penetration-testing": "allow",
+          "detecting-aws-cloudtrail-anomalies": "allow",
+          "detecting-aws-credential-exposure-with-trufflehog": "allow",
+          "detecting-aws-guardduty-findings-automation": "allow",
+          "detecting-aws-iam-privilege-escalation": "allow",
+          "detecting-azure-lateral-movement": "allow",
+          "detecting-azure-service-principal-abuse": "allow",
+          "detecting-azure-storage-account-misconfigurations": "allow",
+          "detecting-cloud-threats-with-guardduty": "allow",
+          "detecting-compromised-cloud-credentials": "allow",
+          "detecting-container-drift-at-runtime": "allow",
+          "detecting-container-escape-attempts": "allow",
+          "detecting-container-escape-with-falco-rules": "allow",
+          "detecting-container-runtime-threats-with-falco": "allow",
+          "detecting-cryptomining-in-cloud": "allow",
+          "detecting-misconfigured-azure-storage": "allow",
+          "detecting-oauth-token-theft": "allow",
+          "detecting-privilege-escalation-in-kubernetes-pods": "allow",
+          "detecting-s3-data-exfiltration-attempts": "allow",
+          "detecting-serverless-function-injection": "allow",
+          "detecting-shadow-it-cloud-usage": "allow",
+          "detecting-suspicious-oauth-application-consent": "allow",
+          "emulating-cloud-attacks-with-stratus-red-team": "allow",
+          "enumerating-cloud-with-cloudfox": "allow",
+          "escaping-containers-to-host": "allow",
+          "exploiting-aws-with-pacu": "allow",
+          "hardening-docker-containers-for-production": "allow",
+          "hardening-docker-daemon-configuration": "allow",
+          "implementing-aws-config-rules-for-compliance": "allow",
+          "implementing-aws-macie-for-data-classification": "allow",
+          "implementing-aws-nitro-enclave-security": "allow",
+          "implementing-aws-security-hub": "allow",
+          "implementing-aws-security-hub-compliance": "allow",
+          "implementing-azure-defender-for-cloud": "allow",
+          "implementing-cloud-dlp-for-data-protection": "allow",
+          "implementing-cloud-security-posture-management": "allow",
+          "implementing-cloud-trail-log-analysis": "allow",
+          "implementing-cloud-waf-rules": "allow",
+          "implementing-cloud-workload-protection": "allow",
+          "implementing-container-image-minimal-base-with-distroless": "allow",
+          "implementing-container-network-policies-with-calico": "allow",
+          "implementing-gcp-binary-authorization": "allow",
+          "implementing-gcp-organization-policy-constraints": "allow",
+          "implementing-gcp-vpc-firewall-rules": "allow",
+          "implementing-image-provenance-verification-with-cosign": "allow",
+          "implementing-kubernetes-network-policy-with-calico": "allow",
+          "implementing-kubernetes-pod-security-standards": "allow",
+          "implementing-network-policies-for-kubernetes": "allow",
+          "implementing-opa-gatekeeper-for-policy-enforcement": "allow",
+          "implementing-pod-security-admission-controller": "allow",
+          "implementing-rbac-hardening-for-kubernetes": "allow",
+          "implementing-runtime-security-with-tetragon": "allow",
+          "implementing-secrets-management-with-vault": "allow",
+          "implementing-supply-chain-security-with-in-toto": "allow",
+          "implementing-zero-trust-in-cloud": "allow",
+          "implementing-zero-trust-network-access": "allow",
+          "managing-cloud-identity-with-okta": "allow",
+          "performing-aws-account-enumeration-with-scout-suite": "allow",
+          "performing-aws-privilege-escalation-assessment": "allow",
+          "performing-cloud-asset-inventory-with-cartography": "allow",
+          "performing-cloud-forensics-with-aws-cloudtrail": "allow",
+          "performing-cloud-log-forensics-with-athena": "allow",
+          "performing-cloud-native-forensics-with-falco": "allow",
+          "performing-cloud-native-threat-hunting-with-aws-detective": "allow",
+          "performing-cloud-penetration-testing-with-pacu": "allow",
+          "performing-container-escape-detection": "allow",
+          "performing-container-security-scanning-with-trivy": "allow",
+          "performing-docker-bench-security-assessment": "allow",
+          "performing-gcp-penetration-testing-with-gcpbucketbrute": "allow",
+          "performing-gcp-security-assessment-with-forseti": "allow",
+          "performing-kubernetes-cis-benchmark-with-kube-bench": "allow",
+          "performing-kubernetes-etcd-security-assessment": "allow",
+          "performing-kubernetes-penetration-testing": "allow",
+          "performing-serverless-function-security-review": "allow",
+          "remediating-s3-bucket-misconfiguration": "allow",
+          "scanning-container-images-with-grype": "allow",
+          "scanning-docker-images-with-trivy": "allow",
+          "scanning-kubernetes-manifests-with-kubesec": "allow",
+          "securing-api-gateway-with-aws-waf": "allow",
+          "securing-aws-iam-permissions": "allow",
+          "securing-aws-lambda-execution-roles": "allow",
+          "securing-azure-with-microsoft-defender": "allow",
+          "securing-container-registry-images": "allow",
+          "securing-container-registry-with-harbor": "allow",
+          "securing-helm-chart-deployments": "allow",
+          "securing-kubernetes-on-cloud": "allow",
+          "securing-serverless-functions": "allow"
+        }
+      },
+      "tools": {
+        "jupyter_*": false
+      }
+    },
+    "forensics": {
+      "mode": "subagent",
+      "description": "Purple-team DFIR subagent dispatched by the pentest agent for one focused job per call (e.g. 'check whether this recon/exploit activity would show up in the logs', 'analyze this artifact/sample recovered from the target'). Scoped to digital-forensics, threat-hunting, incident-response, malware-analysis, and SOC-operations skills (198 skills) — the largest single category in the library.",
+      "prompt": "You are a senior DFIR/threat-hunting analyst doing ONE focused job per invocation: either (a) validating whether specific red-team/pentest activity from this engagement would be detected (purple-teaming), or (b) analyzing an artifact, log set, or sample that was recovered during the engagement.\n\nAssume the calling agent already confirmed authorization and scope. Analyzing logs, artifacts, or samples you already have access to from the engagement does not require a fresh scope check, but if asked to pull logs from or analyze a system that wasn't part of the engagement, stop and say so.\n\nFor every task:\n1. Scan your available skills and load the one(s) whose description most specifically matches the actual artifact/log type and platform in front of you (e.g. prefer a named-tool memory-forensics skill once you know the OS and what dumped it, prefer the specific log-source skill — Azure activity logs vs. Linux audit logs vs. PowerShell script-block logging — over a generic one).\n2. When validating detection of red-team activity: reconstruct what the recon/exploit/postexploit subagents actually did (technique, timestamp, host) from the activity log, then check the corresponding log sources/telemetry for evidence it was seen — report what would and wouldn't have alerted a defender, and why.\n3. When analyzing a sample or artifact: work from safe, standard triage practice — static analysis and known-safe sandboxing before anything that could execute untrusted code live, and never execute a sample outside a disposable/isolated environment.\n4. Correlate rather than look at one source in isolation — an EDR alert, a log entry, and a network capture together tell a more complete story than any one of them.\n5. Record findings (what was analyzed, what was found, MITRE ATT&CK/D3FEND mapping, detection verdict) into pentest-engagements/<engagement>/activity-log.md, clearly separated from offensive activity so the report can distinguish 'what we did' from 'what we found while investigating'.\n\nEvery bash command still requires user confirmation. webfetch to public reference/documentation sites (Sigma rules, detection engineering references, malware family write-ups) is pre-approved.",
+      "permission": {
+        "edit": {
+          "*": "deny",
+          "pentest-engagements/**": "allow"
+        },
+        "bash": "ask",
+        "webfetch": "allow",
+        "skill": {
+          "*": "deny",
+          "acquiring-disk-image-with-dd-and-dcfldd": "allow",
+          "analyzing-android-malware-with-apktool": "allow",
+          "analyzing-bootkit-and-rootkit-samples": "allow",
+          "analyzing-browser-forensics-with-hindsight": "allow",
+          "analyzing-cobalt-strike-beacon-configuration": "allow",
+          "analyzing-cobaltstrike-malleable-c2-profiles": "allow",
+          "analyzing-command-and-control-communication": "allow",
+          "analyzing-disk-image-with-autopsy": "allow",
+          "analyzing-dns-logs-for-exfiltration": "allow",
+          "analyzing-docker-container-forensics": "allow",
+          "analyzing-email-headers-for-phishing-investigation": "allow",
+          "analyzing-golang-malware-with-ghidra": "allow",
+          "analyzing-heap-spray-exploitation": "allow",
+          "analyzing-linux-audit-logs-for-intrusion": "allow",
+          "analyzing-linux-elf-malware": "allow",
+          "analyzing-linux-kernel-rootkits": "allow",
+          "analyzing-linux-system-artifacts": "allow",
+          "analyzing-lnk-file-and-jump-list-artifacts": "allow",
+          "analyzing-macro-malware-in-office-documents": "allow",
+          "analyzing-malicious-pdf-with-peepdf": "allow",
+          "analyzing-malware-behavior-with-cuckoo-sandbox": "allow",
+          "analyzing-malware-persistence-with-autoruns": "allow",
+          "analyzing-malware-sandbox-evasion-techniques": "allow",
+          "analyzing-memory-dumps-with-volatility": "allow",
+          "analyzing-mft-for-deleted-file-recovery": "allow",
+          "analyzing-network-covert-channels-in-malware": "allow",
+          "analyzing-network-traffic-for-incidents": "allow",
+          "analyzing-network-traffic-of-malware": "allow",
+          "analyzing-outlook-pst-for-email-forensics": "allow",
+          "analyzing-packed-malware-with-upx-unpacker": "allow",
+          "analyzing-pdf-malware-with-pdfid": "allow",
+          "analyzing-persistence-mechanisms-in-linux": "allow",
+          "analyzing-prefetch-files-for-execution-history": "allow",
+          "analyzing-ransomware-encryption-mechanisms": "allow",
+          "analyzing-ransomware-network-indicators": "allow",
+          "analyzing-security-logs-with-splunk": "allow",
+          "analyzing-slack-space-and-file-system-artifacts": "allow",
+          "analyzing-supply-chain-malware-artifacts": "allow",
+          "analyzing-usb-device-connection-history": "allow",
+          "analyzing-windows-amcache-artifacts": "allow",
+          "analyzing-windows-event-logs-in-splunk": "allow",
+          "analyzing-windows-lnk-files-for-artifacts": "allow",
+          "analyzing-windows-prefetch-with-python": "allow",
+          "analyzing-windows-registry-for-artifacts": "allow",
+          "analyzing-windows-shellbag-artifacts": "allow",
+          "building-automated-malware-submission-pipeline": "allow",
+          "building-detection-rule-with-splunk-spl": "allow",
+          "building-detection-rules-with-sigma": "allow",
+          "building-incident-response-dashboard": "allow",
+          "building-incident-response-playbook": "allow",
+          "building-incident-timeline-with-timesketch": "allow",
+          "building-malware-incident-communication-template": "allow",
+          "building-soc-escalation-matrix": "allow",
+          "building-soc-metrics-and-kpi-tracking": "allow",
+          "building-soc-playbook-for-ransomware": "allow",
+          "building-super-timelines-with-plaso": "allow",
+          "building-threat-hunt-hypothesis-framework": "allow",
+          "building-threat-intelligence-enrichment-in-splunk": "allow",
+          "building-threat-intelligence-feed-integration": "allow",
+          "building-vulnerability-scanning-workflow": "allow",
+          "collecting-indicators-of-compromise": "allow",
+          "collecting-volatile-evidence-from-compromised-host": "allow",
+          "conducting-cloud-incident-response": "allow",
+          "conducting-malware-incident-response": "allow",
+          "conducting-memory-forensics-with-volatility": "allow",
+          "conducting-phishing-incident-response": "allow",
+          "conducting-post-incident-lessons-learned": "allow",
+          "containing-active-breach": "allow",
+          "correlating-security-events-in-qradar": "allow",
+          "deobfuscating-javascript-malware": "allow",
+          "deobfuscating-powershell-obfuscated-malware": "allow",
+          "detecting-dcsync-attack-in-active-directory": "allow",
+          "detecting-dll-sideloading-attacks": "allow",
+          "detecting-email-account-compromise": "allow",
+          "detecting-email-forwarding-rules-attack": "allow",
+          "detecting-entra-offensive-tools-in-graph-logs": "allow",
+          "detecting-fileless-malware-techniques": "allow",
+          "detecting-golden-ticket-attacks-in-kerberos-logs": "allow",
+          "detecting-insider-threat-behaviors": "allow",
+          "detecting-kerberoasting-attacks": "allow",
+          "detecting-lateral-movement-with-splunk": "allow",
+          "detecting-malicious-scheduled-tasks-with-sysmon": "allow",
+          "detecting-mimikatz-execution-patterns": "allow",
+          "detecting-ntlm-relay-with-event-correlation": "allow",
+          "detecting-pass-the-hash-attacks": "allow",
+          "detecting-privilege-escalation-attempts": "allow",
+          "detecting-process-hollowing-technique": "allow",
+          "detecting-process-injection-techniques": "allow",
+          "detecting-rootkit-activity": "allow",
+          "detecting-service-account-abuse": "allow",
+          "detecting-suspicious-powershell-execution": "allow",
+          "detecting-t1003-credential-dumping-with-edr": "allow",
+          "detecting-t1055-process-injection-with-sysmon": "allow",
+          "detecting-t1548-abuse-elevation-control-mechanism": "allow",
+          "detecting-wmi-persistence": "allow",
+          "eradicating-malware-from-infected-systems": "allow",
+          "extracting-browser-history-artifacts": "allow",
+          "extracting-config-from-agent-tesla-rat": "allow",
+          "extracting-credentials-from-memory-dump": "allow",
+          "extracting-iocs-from-malware-samples": "allow",
+          "extracting-windows-event-logs-artifacts": "allow",
+          "fleet-hunting-with-velociraptor": "allow",
+          "generating-forensic-timelines-with-hayabusa": "allow",
+          "hunting-evtx-with-chainsaw": "allow",
+          "hunting-for-anomalous-powershell-execution": "allow",
+          "hunting-for-beaconing-with-frequency-analysis": "allow",
+          "hunting-for-cobalt-strike-beacons": "allow",
+          "hunting-for-command-and-control-beaconing": "allow",
+          "hunting-for-data-exfiltration-indicators": "allow",
+          "hunting-for-data-staging-before-exfiltration": "allow",
+          "hunting-for-dcom-lateral-movement": "allow",
+          "hunting-for-dcsync-attacks": "allow",
+          "hunting-for-defense-evasion-via-timestomping": "allow",
+          "hunting-for-dns-based-persistence": "allow",
+          "hunting-for-dns-tunneling-with-zeek": "allow",
+          "hunting-for-domain-fronting-c2-traffic": "allow",
+          "hunting-for-lateral-movement-via-wmi": "allow",
+          "hunting-for-living-off-the-cloud-techniques": "allow",
+          "hunting-for-living-off-the-land-binaries": "allow",
+          "hunting-for-lolbins-execution-in-endpoint-logs": "allow",
+          "hunting-for-ntlm-relay-attacks": "allow",
+          "hunting-for-persistence-mechanisms-in-windows": "allow",
+          "hunting-for-persistence-via-wmi-subscriptions": "allow",
+          "hunting-for-process-injection-techniques": "allow",
+          "hunting-for-registry-persistence-mechanisms": "allow",
+          "hunting-for-registry-run-key-persistence": "allow",
+          "hunting-for-scheduled-task-persistence": "allow",
+          "hunting-for-shadow-copy-deletion": "allow",
+          "hunting-for-spearphishing-indicators": "allow",
+          "hunting-for-startup-folder-persistence": "allow",
+          "hunting-for-supply-chain-compromise": "allow",
+          "hunting-for-suspicious-scheduled-tasks": "allow",
+          "hunting-for-t1098-account-manipulation": "allow",
+          "hunting-for-unusual-network-connections": "allow",
+          "hunting-for-unusual-service-installations": "allow",
+          "hunting-for-webshell-activity": "allow",
+          "hunting-saas-sso-token-abuse": "allow",
+          "implementing-alert-fatigue-reduction": "allow",
+          "implementing-mitre-attack-coverage-mapping": "allow",
+          "implementing-siem-use-cases-for-detection": "allow",
+          "implementing-soar-automation-with-phantom": "allow",
+          "implementing-soar-playbook-with-palo-alto-xsoar": "allow",
+          "implementing-threat-modeling-with-mitre-attack": "allow",
+          "implementing-ticketing-system-for-incidents": "allow",
+          "implementing-velociraptor-for-ir-collection": "allow",
+          "investigating-insider-threat-indicators": "allow",
+          "investigating-phishing-email-incident": "allow",
+          "investigating-ransomware-attack-artifacts": "allow",
+          "parsing-artifacts-with-eric-zimmerman-tools": "allow",
+          "performing-active-directory-compromise-investigation": "allow",
+          "performing-alert-triage-with-elastic-siem": "allow",
+          "performing-automated-malware-analysis-with-cape": "allow",
+          "performing-cloud-forensics-investigation": "allow",
+          "performing-cloud-incident-containment-procedures": "allow",
+          "performing-cloud-storage-forensic-acquisition": "allow",
+          "performing-deception-technology-deployment": "allow",
+          "performing-disk-forensics-investigation": "allow",
+          "performing-dynamic-analysis-with-any-run": "allow",
+          "performing-false-positive-reduction-in-siem": "allow",
+          "performing-file-carving-with-foremost": "allow",
+          "performing-firmware-malware-analysis": "allow",
+          "performing-insider-threat-investigation": "allow",
+          "performing-ioc-enrichment-automation": "allow",
+          "performing-lateral-movement-detection": "allow",
+          "performing-linux-log-forensics-investigation": "allow",
+          "performing-log-analysis-for-forensic-investigation": "allow",
+          "performing-log-source-onboarding-in-siem": "allow",
+          "performing-malware-persistence-investigation": "allow",
+          "performing-malware-triage-with-yara": "allow",
+          "performing-memory-forensics-with-volatility3": "allow",
+          "performing-memory-forensics-with-volatility3-plugins": "allow",
+          "performing-mobile-device-forensics-with-cellebrite": "allow",
+          "performing-network-forensics-with-wireshark": "allow",
+          "performing-network-packet-capture-analysis": "allow",
+          "performing-purple-team-exercise": "allow",
+          "performing-ransomware-response": "allow",
+          "performing-soc-tabletop-exercise": "allow",
+          "performing-sqlite-database-forensics": "allow",
+          "performing-static-malware-analysis-with-pe-studio": "allow",
+          "performing-steganography-detection": "allow",
+          "performing-threat-hunting-with-elastic-siem": "allow",
+          "performing-threat-hunting-with-yara-rules": "allow",
+          "performing-timeline-reconstruction-with-plaso": "allow",
+          "performing-user-behavior-analytics": "allow",
+          "performing-windows-artifact-analysis-with-eric-zimmerman-tools": "allow",
+          "performing-yara-rule-development-for-detection": "allow",
+          "recovering-deleted-files-with-photorec": "allow",
+          "reverse-engineering-android-malware-with-jadx": "allow",
+          "reverse-engineering-dotnet-malware-with-dnspy": "allow",
+          "reverse-engineering-malware-with-ghidra": "allow",
+          "reverse-engineering-ransomware-encryption-routine": "allow",
+          "reverse-engineering-rust-malware": "allow",
+          "testing-ransomware-recovery-procedures": "allow",
+          "triaging-security-alerts-in-splunk": "allow",
+          "triaging-security-incident": "allow",
+          "triaging-security-incident-with-ir-playbook": "allow",
+          "triaging-windows-with-kape": "allow",
+          "validating-backup-integrity-for-recovery": "allow"
+        }
+      },
+      "tools": {
+        "jupyter_*": false
+      }
+    },
+    "report": {
+      "mode": "subagent",
+      "description": "Report-writing subagent dispatched by the pentest agent at the end of an engagement (or on request) to assemble the activity log and findings into a polished, client-ready report. Read + write only — no bash, no webfetch, no offensive skill access.",
+      "prompt": "You write the final (or interim) engagement report from what's already recorded under pentest-engagements/<engagement>/ — activity-log.md, findings/, and scope.md. You do not run new tests or tools yourself.\n\nProduce a structured report: executive summary (business risk, in plain language), scope and methodology actually used, findings ordered by severity with reproduction steps drawn from the activity log, MITRE ATT&CK technique IDs where recorded, and concrete remediation recommendations per finding. If the activity log is missing detail needed for a finding (reproduction steps, evidence, severity rationale), say so explicitly in the report rather than inventing detail that wasn't actually recorded.\n\nWrite the report to pentest-engagements/<engagement>/report.md. All file writes are restricted to that engagement's folder.",
+      "permission": {
+        "edit": {
+          "*": "deny",
+          "pentest-engagements/**": "allow"
+        },
+        "bash": "deny",
+        "webfetch": "deny"
+      },
+      "tools": {
+        "skill": false
+      }
+    }
+  },
+  "disabled_providers": [],
+  "provider": {
+    "afiqstore": {
+      "name": "afiqstore",
+      "npm": "@ai-sdk/openai-compatible",
+      "options": {
+        "baseURL": "https://rootsys.cloud/v1"
+      },
+      "models": {
+        "kimi-k3": {
+          "name": "kimi-k3"
+        },
+        "glm-5.3": {
+          "name": "glm-5.3"
+        },
+        "deepseek-v4-pro": {
+          "name": "deepseek-v4-pro"
+        },
+        "claude-opus-5": {
+          "name": "claude-opus-5"
+        },
+        "gpt-5.6-sol-thinking-agentic": {
+          "name": "gpt-5.6-sol-thinking-agentic"
+        },
+        "gpt-5.6-sol-thinking": {
+          "name": "gpt-5.6-sol-thinking"
+        }
+      }
+    }
+  }
+}

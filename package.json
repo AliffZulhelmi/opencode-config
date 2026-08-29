@@ -1,0 +1,8 @@
+{
+  "dependencies": {
+    "@opencode-ai/plugin": "1.18.23",
+    "opencode-plugin-inspector": "^0.0.7",
+    "opencode-plugin-notification": "^0.0.5",
+    "superpowers": "github:obra/superpowers"
+  }
+}
